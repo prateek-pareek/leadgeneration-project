@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>ProspectOS Comment Assist</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        margin: 0;
+        padding: 14px;
+        width: 280px;
+        color: #111;
+      }
+      h1 {
+        font-size: 14px;
+        margin: 0 0 8px;
+      }
+      p {
+        font-size: 12px;
+        color: #555;
+        margin: 0 0 10px;
+        line-height: 1.4;
+      }
+      .status {
+        font-size: 12px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: #eff6ff;
+        color: #1e40af;
+        margin-bottom: 10px;
+      }
+      .pending {
+        font-size: 11px;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 8px;
+        max-height: 80px;
+        overflow: hidden;
+        color: #374151;
+      }
+      button {
+        margin-top: 10px;
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        background: #fff;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      button:hover {
+        background: #f9fafb;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>ProspectOS Comment Assist</h1>
+    <p>Fills approved comments on LinkedIn, Threads, X, Reddit, Dev.to, and HN. You always click Post.</p>
+    <div id="status" class="status">Checking…</div>
+    <div id="pending" class="pending" style="display: none"></div>
+    <button id="clear" type="button">Clear pending comment</button>
+    <script src="popup.js"></script>
+  </body>
+</html>

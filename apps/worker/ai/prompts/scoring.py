@@ -37,6 +37,9 @@ POST:
 RESEARCH BRIEF:
 {research_brief}
 
+SIGNAL ANALYSIS (pre-classification):
+{signal_analysis}
+
 === SCORING DIMENSIONS ===
 Score each honestly (max in brackets). Use the full range 0 to max.
 
@@ -101,9 +104,21 @@ reply_likelihood [0-3]:
   "bucket": "hot" | "warm" | "cold" | "ignore",
   "top_signals": [string, string, string],
   "explanation": string (2-3 sentences max),
-  "recommended_action": "draft_comment" | "direct_outreach" | "research_more" | "skip",
+  "recommended_action": "draft_comment" | "direct_outreach" | "draft_dm" | "draft_email" | "research_more" | "skip",
+  "help_seeker_type": "agency" | "freelancer" | "either" | "employee" | "unknown" | "none",
+  "engagement_play": "social_comment" | "dm" | "cold_email" | "outreach" | "skip",
   "skip_reason": string | null
 }}
 
 bucket thresholds: hot=75+, warm=50-74, cold=25-49, ignore=0-24
+
+=== ENGAGEMENT ROUTING ===
+Use SIGNAL ANALYSIS hints when provided. Match recommended_action + engagement_play to how they want help:
+- agency / freelancer / either + social platform → draft_comment or draft_dm
+- agency / freelancer + job_portals or formal post → draft_email or direct_outreach
+- employee (full-time hire only) → skip unless staff aug / contractor angle is clear
+- none / weak intent → skip
+
+help_seeker_type: who they want to hire (agency, freelancer, either, employee, unknown, none)
+engagement_play: how we should engage (social_comment, dm, cold_email, outreach, skip)
 """

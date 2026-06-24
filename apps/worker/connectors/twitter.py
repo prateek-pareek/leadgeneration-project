@@ -25,6 +25,7 @@ from utils.scraping import (
     rate_limiter, human_delay, safe_client, with_backoff,
     can_fetch, SeenURLs, random_ua,
 )
+from utils.platform_safety import circuit_breaker, is_blocked
 
 log = structlog.get_logger()
 
@@ -51,6 +52,9 @@ async def _alive(instance: str) -> bool:
 
 
 async def _search_instance(instance: str, query: str, max_results: int) -> list[dict]:
+    if circuit_breaker.is_open("nitter"):
+        return []
+
     url = f"{instance}/search?q={quote_plus(query)}&f=tweets"
 
     ok = await rate_limiter.acquire("nitter")
@@ -61,6 +65,9 @@ async def _search_instance(instance: str, query: str, max_results: int) -> list[
         try:
             resp = await with_backoff(client.get, url, domain="nitter", max_attempts=2)
             if resp is None or resp.status_code != 200:
+                return []
+            if is_blocked(resp.status_code, resp.text):
+                circuit_breaker.record_failure("nitter", "blocked")
                 return []
         except Exception as e:
             log.warning("twitter.fetch_failed", instance=instance, error=str(e))

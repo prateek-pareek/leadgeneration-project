@@ -10,8 +10,10 @@ import asyncpg
 import structlog
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from connectors import hackernews, reddit, linkedin, twitter, producthunt, devto, google_places
+from connectors import hackernews, reddit, linkedin, twitter, threads, producthunt, devto, google_places, job_portals, freelance_marketplaces, github, indiehackers
 from jobs.normalize import process_post
+from utils.scraping import scan_allowed
+from utils.platform_safety import circuit_breaker
 
 log = structlog.get_logger()
 
@@ -22,16 +24,26 @@ CONNECTORS = {
     "linkedin": linkedin.fetch,
     "twitter": twitter.fetch,
     "x": twitter.fetch,
+    "threads": threads.fetch,
+    "thred": threads.fetch,
     "producthunt": producthunt.fetch,
     "ph": producthunt.fetch,
     "devto": devto.fetch,
     "dev.to": devto.fetch,
     "google_places": google_places.fetch,
     "places": google_places.fetch,
+    "job_portals": job_portals.fetch,
+    "jobs": job_portals.fetch,
+    "job_portal": job_portals.fetch,
+    "freelance_marketplaces": freelance_marketplaces.fetch,
+    "freelance": freelance_marketplaces.fetch,
+    "github": github.fetch,
+    "indiehackers": indiehackers.fetch,
+    "ih": indiehackers.fetch,
 }
 
 
-async def handle(payload: dict, db: asyncpg.Connection) -> None:
+async def handle(payload: dict, db: asyncpg.Connection, redis_client=None) -> None:
     source_id = payload.get("source_id")
     org_id = payload.get("org_id")
 
@@ -42,9 +54,9 @@ async def handle(payload: dict, db: asyncpg.Connection) -> None:
     # Load source from DB
     source = await db.fetchrow(
         """
-        SELECT id, name, type, config, org_id
+        SELECT id, name, type, config, org_id, last_run_at
         FROM sources
-        WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL
+        WHERE id = $1 AND org_id = $2
         """,
         uuid.UUID(source_id),
         uuid.UUID(org_id),
@@ -62,6 +74,30 @@ async def handle(payload: dict, db: asyncpg.Connection) -> None:
     config = source["config"] or {}
     if isinstance(config, str):
         config = json.loads(config)
+
+    # Enforce per-platform scan cooldown
+    allowed, cooldown_msg = scan_allowed(source_type, source.get("last_run_at"))
+    if not allowed:
+        log.warning("source_scan.cooldown", source_id=source_id, type=source_type, msg=cooldown_msg)
+        await db.execute(
+            "UPDATE sources SET last_error = $1 WHERE id = $2",
+            cooldown_msg,
+            uuid.UUID(source_id),
+        )
+        return
+
+    # Check circuit breaker for risky platforms
+    domain_map = {"linkedin": "linkedin.com", "threads": "threads.net", "twitter": "nitter", "x": "nitter"}
+    domain = domain_map.get(source_type)
+    if domain and circuit_breaker.is_open(domain):
+        msg = f"Platform temporarily paused after block detection — try again in {circuit_breaker.status(domain)['cooldown_sec'] // 60} min"
+        log.warning("source_scan.circuit_open", source_id=source_id, domain=domain)
+        await db.execute(
+            "UPDATE sources SET last_error = $1 WHERE id = $2",
+            msg,
+            uuid.UUID(source_id),
+        )
+        return
 
     log.info(
         "source_scan.starting",
@@ -100,6 +136,7 @@ async def handle(payload: dict, db: asyncpg.Connection) -> None:
                 post_data=post_data,
                 org_id=org_id,
                 source_id=source_id,
+                redis_client=redis_client,
             )
             if was_new:
                 new_count += 1

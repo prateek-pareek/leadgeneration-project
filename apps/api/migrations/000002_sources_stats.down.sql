@@ -1,0 +1,1 @@
+ALTER TABLE sources DROP COLUMN IF EXISTS last_scan_at; ALTER TABLE sources DROP COLUMN IF EXISTS posts_found;

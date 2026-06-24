@@ -11,9 +11,14 @@ const SOURCE_TYPES = [
   { value: "hackernews",     label: "Hacker News",     icon: "🟠", desc: "Ask HN, Show HN, job posts" },
   { value: "reddit",         label: "Reddit",           icon: "🔴", desc: "Subreddit keyword search" },
   { value: "linkedin",       label: "LinkedIn",         icon: "🔵", desc: "Public posts via Google" },
+  { value: "threads",        label: "Threads",          icon: "🧵", desc: "Public posts via Google" },
   { value: "twitter",        label: "X / Twitter",      icon: "⬛", desc: "Public tweets via Nitter" },
   { value: "producthunt",    label: "Product Hunt",     icon: "🟡", desc: "Discussions & new launches" },
   { value: "devto",          label: "Dev.to",           icon: "⚫", desc: "Articles & discussions" },
+  { value: "github",         label: "GitHub",           icon: "🐙", desc: "Help-wanted issues & hiring posts" },
+  { value: "indiehackers",   label: "Indie Hackers",    icon: "🚀", desc: "Founder posts via Google — no login" },
+  { value: "job_portals",    label: "Job Portals",      icon: "💼", desc: "RemoteOK, Jobicy, Himalayas, WWR — no login" },
+  { value: "freelance_marketplaces", label: "Freelance", icon: "🤝", desc: "Freelancer API + Upwork/Guru via Google — no login" },
   { value: "google_places",  label: "Google Places",    icon: "📍", desc: "Local businesses without websites" },
 ];
 
@@ -21,10 +26,40 @@ const DEFAULT_KEYWORDS: Record<string, string> = {
   hackernews:     "looking for developer, IT outsourcing, devops help, cloud migration",
   reddit:         "need IT help, managed services, hire developer, cloud setup",
   linkedin:       "IT support, devops team, cloud migration, legacy modernisation",
+  threads:        "need developer, IT help, startup tech, cloud costs, hiring",
   twitter:        "IT outsourcing, need developer, cloud costs, devops help",
   producthunt:    "looking for developer, tech team, IT support",
   devto:          "hiring, team, startup, cloud",
+  github:         "looking for developer, need developer, hire developer, contractor, mvp, help wanted",
+  indiehackers:   "need developer, outsource, mvp, saas, technical cofounder, hiring",
+  job_portals:    "web development, full stack, react, node, python, devops, cloud engineer, mobile app",
+  freelance_marketplaces: "software development, web development, devops, cloud migration, mobile app, API development, mvp",
   google_places:  "",
+};
+
+const JOB_PORTALS = [
+  { value: "remoteok",        label: "RemoteOK",         auth: "api" as const },
+  { value: "remotive",        label: "Remotive",         auth: "api" as const },
+  { value: "arbeitnow",       label: "Arbeitnow",        auth: "api" as const },
+  { value: "jobicy",          label: "Jobicy",           auth: "api" as const },
+  { value: "workingnomads",   label: "Working Nomads",   auth: "api" as const },
+  { value: "himalayas",       label: "Himalayas",        auth: "api" as const },
+  { value: "weworkremotely",  label: "We Work Remotely", auth: "rss" as const },
+];
+
+const FREELANCE_MARKETPLACES = [
+  { value: "freelancer",      label: "Freelancer.com",   auth: "api" as const },
+  { value: "upwork",          label: "Upwork",           auth: "snippet" as const },
+  { value: "guru",            label: "Guru",             auth: "snippet" as const },
+  { value: "fiverr",          label: "Fiverr Community", auth: "snippet" as const },
+  { value: "peopleperhour",   label: "PeoplePerHour",    auth: "snippet" as const },
+  { value: "contra",          label: "Contra",           auth: "snippet" as const },
+];
+
+const AUTH_BADGE: Record<string, { label: string; className: string }> = {
+  api:     { label: "No login · API", className: "bg-green-50 text-green-700 border-green-200" },
+  rss:     { label: "No login · RSS", className: "bg-green-50 text-green-700 border-green-200" },
+  snippet: { label: "No login · Google", className: "bg-blue-50 text-blue-700 border-blue-200" },
 };
 
 const PLACES_BUSINESS_TYPES = [
@@ -76,6 +111,8 @@ const DEFAULT_FORM = {
   // Google Places fields
   location: "",
   business_types: ["restaurant", "lawyer", "accountant"] as string[],
+  job_portals: ["remoteok", "remotive", "jobicy", "himalayas"] as string[],
+  freelance_portals: ["freelancer", "upwork", "guru"] as string[],
 };
 
 export default function SourcesPage() {
@@ -128,12 +165,36 @@ export default function SourcesPage() {
     }));
   }
 
+  function toggleJobPortal(value: string) {
+    setForm((f) => ({
+      ...f,
+      job_portals: f.job_portals.includes(value)
+        ? f.job_portals.filter((p) => p !== value)
+        : [...f.job_portals, value],
+    }));
+  }
+
+  function toggleFreelancePortal(value: string) {
+    setForm((f) => ({
+      ...f,
+      freelance_portals: f.freelance_portals.includes(value)
+        ? f.freelance_portals.filter((p) => p !== value)
+        : [...f.freelance_portals, value],
+    }));
+  }
+
   function handleSubmit() {
     let config: any = { max_results: form.max_results };
 
     if (form.type === "google_places") {
       config.location = form.location.trim();
       config.business_types = form.business_types;
+    } else if (form.type === "job_portals") {
+      config.keywords = form.keywords.split(",").map((k) => k.trim()).filter(Boolean);
+      config.portals = form.job_portals;
+    } else if (form.type === "freelance_marketplaces") {
+      config.keywords = form.keywords.split(",").map((k) => k.trim()).filter(Boolean);
+      config.portals = form.freelance_portals;
     } else {
       config.keywords = form.keywords.split(",").map((k) => k.trim()).filter(Boolean);
       if (form.type === "reddit") config.subreddit = form.subreddit;
@@ -149,9 +210,13 @@ export default function SourcesPage() {
   }
 
   const isPlaces = form.type === "google_places";
+  const isJobPortals = form.type === "job_portals";
+  const isFreelance = form.type === "freelance_marketplaces";
   const canSubmit = form.name && !createMutation.isPending &&
     (isPlaces ? form.location.trim().length > 0 && form.business_types.length > 0
-               : form.keywords.length > 0);
+      : isJobPortals ? form.keywords.length > 0 && form.job_portals.length > 0
+      : isFreelance ? form.keywords.length > 0 && form.freelance_portals.length > 0
+      : form.keywords.length > 0);
 
   return (
     <div>
@@ -198,6 +263,29 @@ export default function SourcesPage() {
               ))}
             </div>
 
+            {isFreelance && (
+              <div className="rounded-md bg-emerald-50 border border-emerald-200 px-4 py-3 text-xs text-emerald-800 space-y-1">
+                <p className="font-semibold">🤝 Freelance marketplaces — software dev clients posting projects</p>
+                <p>Freelancer.com uses the official public API (safest). Upwork, Guru, Fiverr, and PeoplePerHour use Google snippets only — no account login, no ban risk.</p>
+                <p className="text-emerald-600">We never log into your Upwork/LinkedIn accounts by default.</p>
+              </div>
+            )}
+
+            {/* Platform safety warnings */}
+            {(form.type === "linkedin" || form.type === "threads" || form.type === "twitter") && (
+              <div className="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-800 space-y-1">
+                <p className="font-semibold">🛡️ Anti-block protection enabled</p>
+                <ul className="list-disc list-inside space-y-0.5 text-amber-700">
+                  <li>Uses Google snippets first — avoids direct platform hits when possible</li>
+                  <li>Strict rate limits: max 3–4 requests/min, daily caps enforced</li>
+                  <li>1-hour cooldown between scans for LinkedIn/Threads</li>
+                  <li>Auto-pauses for 2–3 hours if CAPTCHA or block detected</li>
+                  <li>LinkedIn Playwright is <strong>off by default</strong> (set SCRAPING_LINKEDIN_USE_PLAYWRIGHT=true only if needed)</li>
+                  <li>Only scans public content — no login, no automated posting</li>
+                </ul>
+              </div>
+            )}
+
             {/* Google Places info banner */}
             {isPlaces && (
               <div className="rounded-md bg-blue-50 border border-blue-200 px-4 py-3 text-xs text-blue-700 space-y-1">
@@ -207,13 +295,26 @@ export default function SourcesPage() {
               </div>
             )}
 
+            {isJobPortals && (
+              <div className="rounded-md bg-violet-50 border border-violet-200 px-4 py-3 text-xs text-violet-700 space-y-1">
+                <p className="font-semibold">💼 Job Portals — companies hiring software developers</p>
+                <p>Pulls live listings from public APIs and RSS (RemoteOK, Jobicy, Working Nomads, WWR, etc.). Each hiring company becomes a lead for IT services, staff aug, and DevOps contracts.</p>
+                <p className="text-violet-500">No login required. No API keys needed for most boards.</p>
+              </div>
+            )}
+
             {/* Name */}
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Source name</label>
               <input
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder={isPlaces ? "e.g. Austin Local Businesses" : "e.g. LinkedIn IT Pain Points"}
+                placeholder={
+                  isPlaces ? "e.g. Austin Local Businesses"
+                  : isJobPortals ? "e.g. DevOps & Cloud Hiring"
+                  : isFreelance ? "e.g. Web Dev & DevOps Projects"
+                  : "e.g. LinkedIn IT Pain Points"
+                }
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             </div>
@@ -260,6 +361,52 @@ export default function SourcesPage() {
                   )}
                 </div>
               </>
+            ) : isJobPortals || isFreelance ? (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">
+                    {isFreelance ? "Marketplaces to scan" : "Job boards to scan"}
+                    <span className="text-gray-400"> (select all that apply)</span>
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {(isFreelance ? FREELANCE_MARKETPLACES : JOB_PORTALS).map((portal) => {
+                      const selected = (isFreelance ? form.freelance_portals : form.job_portals).includes(portal.value);
+                      const badge = AUTH_BADGE[portal.auth];
+                      return (
+                        <button
+                          key={portal.value}
+                          type="button"
+                          onClick={() => isFreelance ? toggleFreelancePortal(portal.value) : toggleJobPortal(portal.value)}
+                          className={`rounded-lg px-3 py-2 text-left border transition-all ${
+                            selected
+                              ? "bg-brand-600 text-white border-brand-600"
+                              : "bg-white text-gray-700 border-gray-300 hover:border-brand-400"
+                          }`}
+                        >
+                          <span className="block text-xs font-medium">{portal.label}</span>
+                          <span className={`mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] border ${
+                            selected ? "bg-white/20 text-white border-white/30" : badge.className
+                          }`}>
+                            {badge.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                    {isFreelance ? "Project keywords" : "Role keywords"}
+                    <span className="text-gray-400"> (comma-separated)</span>
+                  </label>
+                  <textarea
+                    value={form.keywords}
+                    onChange={(e) => setForm((f) => ({ ...f, keywords: e.target.value }))}
+                    rows={2}
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-500 resize-none"
+                  />
+                </div>
+              </>
             ) : (
               <>
                 {/* Keywords */}
@@ -301,6 +448,8 @@ export default function SourcesPage() {
                 >
                   {isPlaces
                     ? [10, 20, 30, 50].map((n) => <option key={n} value={n}>{n} businesses</option>)
+                    : isJobPortals || isFreelance
+                    ? [10, 20, 30, 50].map((n) => <option key={n} value={n}>{n} {isFreelance ? "projects" : "jobs"}</option>)
                     : [10, 20, 30, 50].map((n) => <option key={n} value={n}>{n} posts</option>)
                   }
                 </select>
@@ -353,8 +502,12 @@ export default function SourcesPage() {
             {sources.map((src: any) => {
               const typeInfo = SOURCE_TYPES.find((t) => t.value === src.type);
               const isGP = src.type === "google_places";
+              const isJP = src.type === "job_portals";
+              const isFM = src.type === "freelance_marketplaces";
               const subtitle = isGP
                 ? `📍 ${src.config?.location ?? "location not set"} · ${(src.config?.business_types ?? []).length} categories`
+                : isJP || isFM
+                ? `${isFM ? "🤝" : "💼"} ${(src.config?.portals ?? []).join(", ") || "no portals"} · ${(src.config?.keywords ?? []).slice(0, 3).join(", ")}`
                 : `${typeInfo?.label} · ${(src.config?.keywords ?? []).slice(0, 3).join(", ")}${(src.config?.keywords ?? []).length > 3 ? " …" : ""}`;
 
               return (
@@ -374,7 +527,7 @@ export default function SourcesPage() {
                           <p className="flex items-center gap-1 text-xs text-gray-400 mt-1">
                             <Clock className="h-3 w-3" />
                             Last run {new Date(src.lastRunAt).toLocaleString()}
-                            {src.postsFound != null && ` · ${src.postsFound} ${isGP ? "businesses" : "posts"} found`}
+                            {src.postsFound != null && ` · ${src.postsFound} ${isGP ? "businesses" : isJP || isFM ? "projects" : "posts"} found`}
                           </p>
                         )}
                         {src.lastError && (

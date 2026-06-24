@@ -32,6 +32,13 @@ func (e *Enqueuer) Enqueue(ctx context.Context, jobType string, payload map[stri
 	return e.rdb.LPush(ctx, QueueKey, b).Err()
 }
 
+func (e *Enqueuer) EnqueueAnalyze(ctx context.Context, leadID, orgID uuid.UUID) error {
+	return e.Enqueue(ctx, "lead.analyze", map[string]any{
+		"lead_id": leadID.String(),
+		"org_id":  orgID.String(),
+	})
+}
+
 func (e *Enqueuer) EnqueueResearch(ctx context.Context, leadID, orgID uuid.UUID) error {
 	return e.Enqueue(ctx, "lead.research", map[string]any{
 		"lead_id": leadID.String(),
@@ -50,6 +57,13 @@ func (e *Enqueuer) EnqueueCommentDraft(ctx context.Context, leadID, orgID uuid.U
 	return e.Enqueue(ctx, "comment.generate", map[string]any{
 		"lead_id": leadID.String(),
 		"org_id":  orgID.String(),
+	})
+}
+
+func (e *Enqueuer) EnqueueCommentPost(ctx context.Context, draftID, orgID uuid.UUID) error {
+	return e.Enqueue(ctx, "comment.post", map[string]any{
+		"draft_id": draftID.String(),
+		"org_id":   orgID.String(),
 	})
 }
 

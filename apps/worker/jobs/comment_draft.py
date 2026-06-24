@@ -115,6 +115,11 @@ Suggested angle: {row['engagement_angle'] or 'Not specified'}
                     VALUES ($1, 'comment_draft', $2, $3)
                 """, org_id, draft_id, lead_id)
 
+            await conn.execute("""
+                UPDATE leads SET pipeline_stage = 'Comment Drafted', updated_at = NOW()
+                WHERE id = $1 AND pipeline_stage IN ('Discovered', 'Qualified', 'Researched')
+            """, lead_id)
+
         log.info("comment_draft_complete",
                  lead_id=lead_id,
                  draft_id=draft_id,

@@ -40,9 +40,11 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 
 	query := `
-		SELECT cd.id, cd.lead_id, cd.post_id, cd.variants, cd.status,
-		       cd.approved_at, cd.posted_at, cd.created_at
+		SELECT cd.id, cd.lead_id, cd.post_id, cd.variants, cd.selected_variant, cd.status,
+		       cd.approved_at, cd.posted_at, cd.posted_url, cd.created_at,
+		       p.platform, p.url, p.text as post_text
 		FROM comment_drafts cd
+		LEFT JOIN posts p ON p.id = cd.post_id
 		WHERE cd.org_id = $1`
 	args := []any{orgID}
 	if status != "" {
@@ -59,20 +61,29 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type draft struct {
-		ID          uuid.UUID  `json:"id"`
-		LeadID      uuid.UUID  `json:"lead_id"`
-		PostID      *uuid.UUID `json:"post_id"`
-		Variants    []byte     `json:"variants"`
-		Status      string     `json:"status"`
-		ApprovedAt  *string    `json:"approved_at"`
-		PostedAt    *string    `json:"posted_at"`
-		CreatedAt   string     `json:"created_at"`
+		ID               uuid.UUID  `json:"id"`
+		LeadID           uuid.UUID  `json:"lead_id"`
+		PostID           *uuid.UUID `json:"post_id"`
+		Variants         []byte     `json:"variants"`
+		SelectedVariant  []byte     `json:"selected_variant"`
+		Status           string     `json:"status"`
+		ApprovedAt       *string    `json:"approved_at"`
+		PostedAt         *string    `json:"posted_at"`
+		PostedURL        *string    `json:"posted_url"`
+		CreatedAt        string     `json:"created_at"`
+		Platform         *string    `json:"platform"`
+		PostURL          *string    `json:"post_url"`
+		PostText         *string    `json:"post_text"`
 	}
 
 	var items []draft
 	for rows.Next() {
 		var d draft
-		_ = rows.Scan(&d.ID, &d.LeadID, &d.PostID, &d.Variants, &d.Status, &d.ApprovedAt, &d.PostedAt, &d.CreatedAt)
+		_ = rows.Scan(
+			&d.ID, &d.LeadID, &d.PostID, &d.Variants, &d.SelectedVariant, &d.Status,
+			&d.ApprovedAt, &d.PostedAt, &d.PostedURL, &d.CreatedAt,
+			&d.Platform, &d.PostURL, &d.PostText,
+		)
 		items = append(items, d)
 	}
 	if items == nil {
@@ -100,7 +111,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.enqueuer.EnqueueCommentDraft(r.Context(), body.LeadID.String(), orgID.String()); err != nil {
+	if err := h.enqueuer.EnqueueCommentDraft(r.Context(), body.LeadID, orgID); err != nil {
 		respond.InternalError(w, "failed to enqueue comment generation")
 		return
 	}
@@ -181,8 +192,9 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	_, _ = h.svc.db.Exec(r.Context(), `
 		UPDATE approvals SET status='approved', decided_by=$1, decision_at=NOW() WHERE ref_id=$2
 	`, userID, id)
+	_ = h.enqueuer.EnqueueCommentPost(r.Context(), id, orgID)
 	h.svc.audit.Log(r.Context(), orgID, "comment.approved", "comment_draft", id, nil, nil)
-	respond.JSON(w, http.StatusOK, map[string]string{"message": "approved"})
+	respond.JSON(w, http.StatusOK, map[string]string{"message": "approved — ready to post"})
 }
 
 func (h *Handler) Reject(w http.ResponseWriter, r *http.Request) {
@@ -219,6 +231,10 @@ func (h *Handler) MarkPosted(w http.ResponseWriter, r *http.Request) {
 		UPDATE comment_drafts SET status='posted', posted_at=NOW(), posted_url=$1, updated_at=NOW()
 		WHERE id=$2 AND org_id=$3
 	`, body.PostedURL, id, orgID)
+	_, _ = h.svc.db.Exec(r.Context(), `
+		UPDATE leads SET pipeline_stage='Comment Posted', updated_at=NOW()
+		WHERE id = (SELECT lead_id FROM comment_drafts WHERE id=$1)
+	`, id)
 	h.svc.audit.Log(r.Context(), orgID, "comment.posted", "comment_draft", id, nil, nil)
 	respond.JSON(w, http.StatusOK, map[string]string{"message": "marked as posted"})
 }

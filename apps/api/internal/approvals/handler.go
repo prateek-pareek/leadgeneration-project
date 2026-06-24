@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/acmecorp/prospectOS/api/internal/audit"
+	"github.com/acmecorp/prospectOS/api/internal/jobs"
 	"github.com/acmecorp/prospectOS/api/internal/shared/middleware"
 	"github.com/acmecorp/prospectOS/api/internal/shared/respond"
 )
@@ -21,9 +22,14 @@ func NewService(db *pgxpool.Pool, audit *audit.Service) *Service {
 	return &Service{db: db, audit: audit}
 }
 
-type Handler struct{ svc *Service }
+type Handler struct {
+	svc      *Service
+	enqueuer *jobs.Enqueuer
+}
 
-func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *Service, enqueuer *jobs.Enqueuer) *Handler {
+	return &Handler{svc: svc, enqueuer: enqueuer}
+}
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := middleware.GetOrgID(r.Context())
@@ -40,13 +46,15 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	query := `
 		SELECT a.id, a.type, a.ref_id, a.lead_id, a.status, a.created_at,
-		       l_author.display_name, l_author.handle, l_author.platform,
-		       p.text, p.url, p.platform as post_platform,
-		       ls.score, ls.bucket
+		       l_author.display_name, l_author.handle, l_author.platform as author_platform,
+		       p.text, p.url, p.platform as post_platform, p.posted_at,
+		       ls.score, ls.bucket,
+		       cd.variants, cd.selected_variant, cd.status as draft_status
 		FROM approvals a
 		LEFT JOIN leads l ON l.id = a.lead_id
 		LEFT JOIN authors l_author ON l_author.id = l.author_id
 		LEFT JOIN posts p ON p.id = l.post_id
+		LEFT JOIN comment_drafts cd ON cd.id = a.ref_id AND a.type = 'comment_draft'
 		LEFT JOIN LATERAL (
 			SELECT score, bucket FROM lead_scores
 			WHERE lead_id = l.id ORDER BY scored_at DESC LIMIT 1
@@ -66,36 +74,82 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	type approval struct {
-		ID            uuid.UUID  `json:"id"`
-		Type          string     `json:"type"`
-		RefID         uuid.UUID  `json:"ref_id"`
-		LeadID        *uuid.UUID `json:"lead_id"`
-		Status        string     `json:"status"`
-		CreatedAt     string     `json:"created_at"`
-		AuthorName    *string    `json:"author_name"`
-		AuthorHandle  *string    `json:"author_handle"`
-		Platform      *string    `json:"platform"`
-		PostText      *string    `json:"post_text"`
-		PostURL       *string    `json:"post_url"`
-		PostPlatform  *string    `json:"post_platform"`
-		Score         *int       `json:"score"`
-		Bucket        *string    `json:"bucket"`
-	}
-
-	var items []approval
+	var items []map[string]any
 	for rows.Next() {
-		var a approval
-		_ = rows.Scan(
-			&a.ID, &a.Type, &a.RefID, &a.LeadID, &a.Status, &a.CreatedAt,
-			&a.AuthorName, &a.AuthorHandle, &a.Platform,
-			&a.PostText, &a.PostURL, &a.PostPlatform,
-			&a.Score, &a.Bucket,
+		var (
+			id, aTypeVal, aStatus, createdAt string
+			refID                            uuid.UUID
+			leadID                           *uuid.UUID
+			authorName, authorHandle         *string
+			authorPlatform                   *string
+			postText, postURL                *string
+			postPlatform                     *string
+			postedAt                         *string
+			score                            *int
+			bucket                           *string
+			variants, selectedVariant        []byte
+			draftStatus                      *string
 		)
-		items = append(items, a)
+		_ = rows.Scan(
+			&id, &aTypeVal, &refID, &leadID, &aStatus, &createdAt,
+			&authorName, &authorHandle, &authorPlatform,
+			&postText, &postURL, &postPlatform, &postedAt,
+			&score, &bucket,
+			&variants, &selectedVariant, &draftStatus,
+		)
+
+		item := map[string]any{
+			"id":        id,
+			"type":      aTypeVal,
+			"refId":     refID.String(),
+			"leadId":    nil,
+			"status":    aStatus,
+			"createdAt": createdAt,
+		}
+		if leadID != nil {
+			item["leadId"] = leadID.String()
+		}
+
+		lead := map[string]any{}
+		if authorName != nil || authorHandle != nil {
+			lead["author"] = map[string]any{
+				"displayName": authorName,
+				"handle":      authorHandle,
+				"platform":    authorPlatform,
+			}
+		}
+		if postText != nil || postURL != nil {
+			lead["post"] = map[string]any{
+				"text":     postText,
+				"url":      postURL,
+				"platform": postPlatform,
+				"postedAt": postedAt,
+			}
+		}
+		if score != nil {
+			lead["latestScore"] = map[string]any{
+				"score":  *score,
+				"bucket": bucket,
+			}
+		}
+		if len(lead) > 0 {
+			item["lead"] = lead
+		}
+
+		if aTypeVal == "comment_draft" && len(variants) > 0 {
+			var parsed []any
+			_ = json.Unmarshal(variants, &parsed)
+			item["commentDraft"] = map[string]any{
+				"id":       refID.String(),
+				"variants": parsed,
+				"status":   draftStatus,
+			}
+		}
+
+		items = append(items, item)
 	}
 	if items == nil {
-		items = []approval{}
+		items = []map[string]any{}
 	}
 	respond.JSON(w, http.StatusOK, items)
 }
@@ -110,7 +164,7 @@ func (h *Handler) Count(w http.ResponseWriter, r *http.Request) {
 	_ = h.svc.db.QueryRow(r.Context(), `
 		SELECT COUNT(*) FROM approvals WHERE org_id=$1 AND status='pending'
 	`, orgID).Scan(&count)
-	respond.JSON(w, http.StatusOK, map[string]int{"pending": count})
+	respond.JSON(w, http.StatusOK, map[string]int{"pending": count, "count": count})
 }
 
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
@@ -158,13 +212,13 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update the underlying draft status
 	if aType == "comment_draft" {
 		selected, _ := json.Marshal(map[string]string{"text": body.SelectedText})
 		_, _ = h.svc.db.Exec(r.Context(), `
 			UPDATE comment_drafts SET status='approved', selected_variant=$1, approved_by=$2, approved_at=NOW()
 			WHERE id=$3
 		`, selected, userID, refID)
+		_ = h.enqueuer.EnqueueCommentPost(r.Context(), refID, orgID)
 	} else if aType == "outreach_draft" {
 		_, _ = h.svc.db.Exec(r.Context(), `
 			UPDATE outreach_drafts SET status='approved', approved_by=$1, approved_at=NOW() WHERE id=$2
@@ -172,7 +226,9 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.svc.audit.Log(r.Context(), orgID, "approval.approved", "approval", id, nil, map[string]string{"type": aType})
-	respond.JSON(w, http.StatusOK, map[string]string{"message": "approved"})
+	respond.JSON(w, http.StatusOK, map[string]string{
+		"message": "approved — comment queued for posting assist",
+	})
 }
 
 func (h *Handler) Reject(w http.ResponseWriter, r *http.Request) {

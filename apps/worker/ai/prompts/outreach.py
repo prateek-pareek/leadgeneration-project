@@ -20,6 +20,12 @@ LEAD CONTEXT:
 
 PIPELINE STAGE: {pipeline_stage}
 PREVIOUS INTERACTION: {interaction_summary}
+HELP SEEKER TYPE: {help_seeker_type}
+
+Tailor tone to who they want to hire:
+- agency: position as a team/partner that can own delivery, not a solo freelancer
+- freelancer: lighter touch, project-based, flexible capacity
+- either: mention both team and flexible engagement options without being salesy
 
 Message types and guidelines:
 - linkedin_dm / x_dm: Very short (2-3 sentences), casual, one clear next step

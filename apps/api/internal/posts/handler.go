@@ -143,7 +143,20 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, "failed to create post")
 		return
 	}
-	respond.JSON(w, http.StatusCreated, map[string]any{"id": id})
+
+	var leadID uuid.UUID
+	err = h.svc.db.QueryRow(r.Context(), `
+		INSERT INTO leads (org_id, post_id, source)
+		VALUES ($1, $2, $3) RETURNING id
+	`, orgID, id, platform).Scan(&leadID)
+	if err != nil {
+		respond.InternalError(w, "failed to create lead from post")
+		return
+	}
+	_, _ = h.svc.db.Exec(r.Context(), `UPDATE posts SET is_processed = true WHERE id = $1`, id)
+	_ = h.svc.enqueuer.EnqueueAnalyze(r.Context(), leadID, orgID)
+
+	respond.JSON(w, http.StatusCreated, map[string]any{"id": id, "lead_id": leadID})
 }
 
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -172,6 +185,6 @@ func (h *Handler) Process(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.svc.enqueuer.EnqueueResearch(r.Context(), leadID, orgID)
+	_ = h.svc.enqueuer.EnqueueAnalyze(r.Context(), leadID, orgID)
 	respond.JSON(w, http.StatusAccepted, map[string]any{"lead_id": leadID, "message": "processing"})
 }

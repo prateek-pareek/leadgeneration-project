@@ -30,6 +30,7 @@ type Lead struct {
 	NextActionAt  *time.Time     `json:"next_action_at"`
 	LastContactAt *time.Time     `json:"last_contact_at"`
 	IsSuppressed  bool           `json:"is_suppressed"`
+	CustomFields  map[string]any `json:"custom_fields,omitempty"`
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`
 	Author        *AuthorSummary `json:"author,omitempty"`
@@ -41,14 +42,4 @@ type ListResult struct {
 	Total  int    `json:"total"`
 	Limit  int    `json:"limit"`
 	Offset int    `json:"offset"`
-}
-
-type listParams struct {
-	Stage  string
-	Bucket string
-	Owner  string
-	Q      string
-	Sort   string
-	Limit  int
-	Offset int
 }

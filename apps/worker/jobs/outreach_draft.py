@@ -31,6 +31,7 @@ class OutreachDraftJob:
             row = await conn.fetchrow("""
                 SELECT
                     l.pipeline_stage,
+                    l.custom_fields,
                     rb.brief_text,
                     rb.engagement_angle,
                     rb.service_fit,
@@ -39,11 +40,13 @@ class OutreachDraftJob:
                     a.handle,
                     a.platform
                 FROM leads l
-                LEFT JOIN research_briefs rb ON rb.lead_id = l.id
+                LEFT JOIN LATERAL (
+                    SELECT brief_text, engagement_angle, service_fit, pain_points
+                    FROM research_briefs WHERE lead_id = l.id
+                    ORDER BY created_at DESC LIMIT 1
+                ) rb ON true
                 LEFT JOIN authors a ON a.id = l.author_id
                 WHERE l.id = $1 AND l.org_id = $2 AND l.deleted_at IS NULL
-                ORDER BY rb.created_at DESC
-                LIMIT 1
             """, lead_id, org_id)
 
         if not row or not row["brief_text"]:
@@ -58,11 +61,19 @@ Engagement angle: {row['engagement_angle'] or 'Not specified'}
 Author: {row['display_name'] or row['handle']} on {row['platform']}
 """.strip()
 
+        help_seeker_type = "unknown"
+        if row["custom_fields"]:
+            cf = row["custom_fields"]
+            if isinstance(cf, str):
+                cf = json.loads(cf)
+            help_seeker_type = (cf.get("signal_analysis") or {}).get("help_seeker_type", "unknown")
+
         prompt = OUTREACH_USER_TEMPLATE.format(
             message_type=message_type,
             research_brief=research_brief,
             pipeline_stage=row["pipeline_stage"],
             interaction_summary="No prior interaction recorded.",
+            help_seeker_type=help_seeker_type,
         )
 
         client = get_client()

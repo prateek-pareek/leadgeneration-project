@@ -69,7 +69,7 @@ func New(cfg *config.Config, db *pgxpool.Pool, rdb *goredis.Client, log *slog.Lo
 	commentsSvc := comments.NewService(db, auditSvc)
 	commentsHandler := comments.NewHandler(commentsSvc, jobEnqueuer)
 	approvalsSvc := approvals.NewService(db, auditSvc)
-	approvalsHandler := approvals.NewHandler(approvalsSvc)
+	approvalsHandler := approvals.NewHandler(approvalsSvc, jobEnqueuer)
 	researchHandler := research.NewHandler(db, jobEnqueuer)
 	scoringHandler := scoring.NewHandler(db, jobEnqueuer)
 	emailHealthSvc := email_health.NewService(db, cfg.DNSResolver)

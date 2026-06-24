@@ -3,12 +3,18 @@
 
 .PHONY: dev stop logs reset deploy setup
 
-# ── Local dev (Windows) ───────────────────────────────────────
+# ── Local dev ─────────────────────────────────────────────────
 dev:
-	powershell -ExecutionPolicy Bypass -File scripts/dev.ps1
+	bash scripts/dev.sh
+
+dev-stop:
+	bash scripts/dev.sh stop
+
+# ── Local dev (Windows / Docker) ──────────────────────────────
+dev-docker:
 
 stop:
-	powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 -Stop
+	bash scripts/dev.sh stop 2>/dev/null || powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 -Stop
 
 logs:
 	docker compose -f infra/docker-compose.yml logs -f $(svc)

@@ -32,7 +32,8 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := h.svc.db.Query(r.Context(), `
-		SELECT id, name, type, config, is_active, last_run_at, next_run_at, created_at
+		SELECT id, name, type, config, is_active, last_run_at, next_run_at,
+		       created_at, posts_found, last_error
 		FROM sources WHERE org_id = $1 ORDER BY created_at DESC
 	`, orgID)
 	if err != nil {
@@ -43,20 +44,39 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	var items []map[string]any
 	for rows.Next() {
 		var s struct {
-			ID        uuid.UUID  `json:"id"`
-			Name      string     `json:"name"`
-			Type      string     `json:"type"`
-			Config    []byte     `json:"config"`
-			IsActive  bool       `json:"is_active"`
-			LastRunAt *string    `json:"last_run_at"`
-			NextRunAt *string    `json:"next_run_at"`
-			CreatedAt string     `json:"created_at"`
+			ID         uuid.UUID `json:"id"`
+			Name       string    `json:"name"`
+			Type       string    `json:"type"`
+			Config     []byte    `json:"config"`
+			IsActive   bool      `json:"is_active"`
+			LastRunAt  *string   `json:"last_run_at"`
+			NextRunAt  *string   `json:"next_run_at"`
+			CreatedAt  string    `json:"created_at"`
+			PostsFound *int      `json:"posts_found"`
+			LastError  *string   `json:"last_error"`
 		}
-		_ = rows.Scan(&s.ID, &s.Name, &s.Type, &s.Config, &s.IsActive, &s.LastRunAt, &s.NextRunAt, &s.CreatedAt)
+		_ = rows.Scan(
+			&s.ID, &s.Name, &s.Type, &s.Config, &s.IsActive,
+			&s.LastRunAt, &s.NextRunAt, &s.CreatedAt, &s.PostsFound, &s.LastError,
+		)
+		status := "active"
+		if !s.IsActive {
+			status = "paused"
+		}
+		if s.LastError != nil && *s.LastError != "" {
+			status = "error"
+		}
+		var config any
+		if len(s.Config) > 0 {
+			_ = json.Unmarshal(s.Config, &config)
+		}
 		items = append(items, map[string]any{
-			"id": s.ID, "name": s.Name, "type": s.Type,
-			"is_active": s.IsActive, "last_run_at": s.LastRunAt,
+			"id": s.ID, "name": s.Name, "type": s.Type, "config": config,
+			"status": status, "is_active": s.IsActive,
+			"last_run_at": s.LastRunAt, "lastRunAt": s.LastRunAt,
 			"next_run_at": s.NextRunAt, "created_at": s.CreatedAt,
+			"posts_found": s.PostsFound, "postsFound": s.PostsFound,
+			"last_error": s.LastError, "lastError": s.LastError,
 		})
 	}
 	if items == nil {
@@ -82,6 +102,16 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Name == "" || body.Type == "" {
 		respond.BadRequest(w, "name and type required")
+		return
+	}
+	allowed := map[string]bool{
+		"hackernews": true, "reddit": true, "linkedin": true, "threads": true,
+		"twitter": true, "x": true, "producthunt": true, "devto": true,
+		"google_places": true, "job_portals": true, "freelance_marketplaces": true,
+		"github": true, "indiehackers": true, "manual": true,
+	}
+	if !allowed[body.Type] {
+		respond.BadRequest(w, "unsupported source type")
 		return
 	}
 	configJSON, _ := json.Marshal(body.Config)

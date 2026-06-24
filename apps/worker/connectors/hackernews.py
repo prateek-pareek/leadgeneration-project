@@ -87,3 +87,11 @@ class HackerNewsConnector:
             "matched_keyword": matched_keyword,
             "raw_data": hit,
         }
+
+
+async def fetch(source_config: dict) -> list[dict]:
+    keywords = source_config.get("keywords") or None
+    max_results = min(source_config.get("max_results", 20), 50)
+    connector = HackerNewsConnector(keywords=keywords)
+    results = await connector.fetch()
+    return results[:max_results]

@@ -112,6 +112,45 @@ export default function LeadDetailPage() {
           )}
         </div>
 
+        {/* Signal analysis */}
+        {(lead as any).custom_fields?.signal_analysis && (
+          <div className="rounded-lg border border-violet-200 bg-violet-50 p-5 shadow-sm">
+            <h3 className="text-sm font-semibold text-violet-900 mb-3">Hiring Signal Analysis</h3>
+            {(() => {
+              const s = (lead as any).custom_fields.signal_analysis;
+              const typeLabels: Record<string, string> = {
+                agency: "Needs Agency / Dev Shop",
+                freelancer: "Needs Freelancer / Contractor",
+                either: "Open to Agency or Freelancer",
+                employee: "Hiring Full-Time Employee",
+                unknown: "Help Signal — Type Unclear",
+                none: "No Hiring Signal",
+              };
+              return (
+                <div className="space-y-2 text-sm">
+                  <div className="flex flex-wrap gap-2">
+                    <span className="rounded-full bg-violet-200 px-2.5 py-0.5 text-xs font-semibold text-violet-800">
+                      {typeLabels[s.help_seeker_type] ?? s.help_seeker_type}
+                    </span>
+                    <span className="rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-gray-600 border border-violet-200">
+                      Play: {(s.engagement_play ?? "").replace(/_/g, " ")}
+                    </span>
+                    <span className="rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-gray-600 border border-violet-200">
+                      Intent: {Math.round((s.intent_strength ?? 0) * 100)}%
+                    </span>
+                  </div>
+                  {s.signals?.length > 0 && (
+                    <ul className="list-disc list-inside text-violet-800 space-y-0.5">
+                      {s.signals.map((sig: string, i: number) => <li key={i}>{sig}</li>)}
+                    </ul>
+                  )}
+                  {s.reasoning && <p className="text-violet-700 text-xs italic">{s.reasoning}</p>}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {/* Research brief */}
           <div className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">

@@ -25,6 +25,8 @@ import httpx
 import structlog
 from playwright.async_api import Page
 
+from utils.platform_safety import circuit_breaker, is_blocked, block_reason, policy_for
+
 log = structlog.get_logger()
 
 # ── User-Agent rotation pool ──────────────────────────────────
@@ -58,26 +60,35 @@ def random_ua() -> str:
 # an extra random spike simulating "reading" or "thinking" time.
 DELAY_PROFILES: dict[str, tuple[float, float]] = {
     "linkedin.com":      (4.0, 9.0),
+    "threads.net":       (2.0, 5.0),
     "google.com":        (3.0, 7.0),
     "twitter.com":       (2.0, 5.0),
     "nitter":            (1.5, 4.0),
     "reddit.com":        (1.5, 3.5),
     "producthunt.com":   (1.0, 3.0),
     "dev.to":            (0.8, 2.0),
+    "remoteok.com":      (1.0, 2.5),
+    "remotive.com":      (1.0, 2.5),
+    "arbeitnow.com":     (1.0, 2.5),
+    "weworkremotely.com":(1.0, 2.5),
+    "freelancer.com":    (1.0, 2.5),
+    "upwork.com":        (2.0, 5.0),
+    "fiverr.com":        (2.0, 5.0),
     "news.ycombinator":  (0.5, 1.5),
     "default":           (1.0, 3.0),
 }
 
 def delay_for(domain: str) -> float:
-    for key, (lo, hi) in DELAY_PROFILES.items():
+    pol = policy_for(domain)
+    lo, hi = pol.min_delay_sec, pol.max_delay_sec
+    for key, (plo, phi) in DELAY_PROFILES.items():
         if key in domain:
-            base = random.uniform(lo, hi)
-            # 15% chance of a longer "reading" pause (simulates human behaviour)
-            if random.random() < 0.15:
-                base += random.uniform(2.0, 5.0)
-            return base
-    lo, hi = DELAY_PROFILES["default"]
-    return random.uniform(lo, hi)
+            lo, hi = max(lo, plo), max(hi, phi)
+            break
+    base = random.uniform(lo, hi)
+    if random.random() < 0.15:
+        base += random.uniform(2.0, 5.0)
+    return base
 
 
 async def human_delay(domain: str = "default") -> None:
@@ -97,22 +108,46 @@ class DomainRateLimiter:
     # Hard ceilings (requests per minute) — intentionally conservative
     LIMITS: dict[str, int] = {
         "linkedin.com":      4,    # very aggressive detection
+        "threads.net":       6,
         "google.com":        6,    # CAPTCHA risk
         "twitter.com":       8,
         "reddit.com":        10,   # Reddit asks for ≤60/min authenticated, much less unauthed
         "producthunt.com":   15,
         "dev.to":            20,
+        "remoteok.com":      15,
+        "remotive.com":      15,
+        "arbeitnow.com":     15,
+        "weworkremotely.com":15,
+        "jobicy.com":          10,
+        "workingnomads.com":   10,
+        "himalayas.app":       10,
+        "freelancer.com":      12,
+        "api.github.com":      8,
+        "upwork.com":          6,
+        "fiverr.com":          6,
         "default":           12,
     }
 
     # Daily quota per domain (total requests in 24h)
     DAILY_CAPS: dict[str, int] = {
         "linkedin.com":      50,
+        "threads.net":       100,
         "google.com":        80,
         "twitter.com":       200,
         "reddit.com":        300,
         "producthunt.com":   400,
         "dev.to":            500,
+        "remoteok.com":      200,
+        "remotive.com":      200,
+        "arbeitnow.com":     200,
+        "weworkremotely.com":200,
+        "jobicy.com":          120,
+        "workingnomads.com":   120,
+        "himalayas.app":       100,
+        "freelancer.com":      200,
+        "api.github.com":      80,
+        "upwork.com":          80,
+        "fiverr.com":          80,
         "default":           300,
     }
 
@@ -137,8 +172,13 @@ class DomainRateLimiter:
     async def acquire(self, domain: str) -> bool:
         """
         Wait until it's safe to make a request to this domain.
-        Returns False if the daily quota is exhausted (request should be skipped).
+        Returns False if the daily quota is exhausted or circuit is open.
         """
+        if circuit_breaker.is_open(domain):
+            log.warning("scraping.circuit_open", domain=domain)
+            return False
+
+        pol = policy_for(domain)
         now = time.monotonic()
         wall = time.time()
 
@@ -147,14 +187,15 @@ class DomainRateLimiter:
             self._daily_count[domain] = 0
             self._daily_reset[domain] = wall
 
-        # Check daily cap
-        cap = self._daily_cap(domain)
+        # Check daily cap (policy overrides defaults when stricter)
+        cap = min(self._daily_cap(domain), pol.daily_cap)
         if self._daily_count[domain] >= cap:
             log.warning("scraping.daily_cap_hit", domain=domain, cap=cap)
             return False
 
         # Token-bucket: wait if we're going too fast
-        min_gap = 60.0 / self._ceiling(domain)
+        rpm = min(self._ceiling(domain), pol.requests_per_minute)
+        min_gap = 60.0 / rpm
         elapsed = now - self._last_request[domain]
         if elapsed < min_gap:
             wait = min_gap - elapsed + random.uniform(0, min_gap * 0.3)  # add jitter
@@ -323,15 +364,42 @@ async def with_backoff(
 ):
     """
     Run an async function with exponential backoff on HTTP errors.
-    Handles 429 (Too Many Requests) and 503 (Service Unavailable).
+    Records circuit-breaker failures on block responses.
     """
     for attempt in range(1, max_attempts + 1):
         try:
-            return await fn(*args, **kwargs)
+            result = await fn(*args, **kwargs)
+            # httpx response — check for soft blocks in 200 body
+            if hasattr(result, "status_code"):
+                body = ""
+                try:
+                    body = result.text[:8000] if result.text else ""
+                except Exception:
+                    pass
+                if is_blocked(result.status_code, body):
+                    reason = block_reason(result.status_code, body)
+                    if domain:
+                        circuit_breaker.record_failure(domain, reason)
+                    if attempt < max_attempts and result.status_code in (429, 503, 502, 403, 999):
+                        wait = base_delay * (2 ** (attempt - 1)) + random.uniform(3, 8)
+                        log.warning("scraping.blocked", status=result.status_code, domain=domain, reason=reason, retry_in=round(wait, 1))
+                        await asyncio.sleep(wait)
+                        continue
+                    return None
+                if domain:
+                    circuit_breaker.record_success(domain)
+            return result
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
-            if status in (429, 503, 502) and attempt < max_attempts:
-                wait = base_delay * (2 ** (attempt - 1)) + random.uniform(1, 3)
+            body = ""
+            try:
+                body = e.response.text[:8000]
+            except Exception:
+                pass
+            if domain and is_blocked(status, body):
+                circuit_breaker.record_failure(domain, block_reason(status, body))
+            if status in (429, 503, 502, 403, 999) and attempt < max_attempts:
+                wait = base_delay * (2 ** (attempt - 1)) + random.uniform(3, 8)
                 log.warning(
                     "scraping.rate_limited",
                     status=status,
@@ -344,12 +412,40 @@ async def with_backoff(
                 raise
         except (httpx.TimeoutException, httpx.ConnectError) as e:
             if attempt < max_attempts:
-                wait = base_delay * attempt + random.uniform(0.5, 2)
+                wait = base_delay * attempt + random.uniform(1, 3)
                 log.warning("scraping.connection_error", error=str(e), retry_in=round(wait, 1))
                 await asyncio.sleep(wait)
             else:
                 raise
     return None
+
+
+def scan_allowed(platform_type: str, last_run_at) -> tuple[bool, str]:
+    """Check if enough time has passed since last source scan for this platform."""
+    if last_run_at is None:
+        return True, ""
+    domain_map = {
+        "linkedin": "linkedin.com",
+        "threads": "threads.net",
+        "twitter": "nitter",
+        "x": "nitter",
+        "google_places": "google.com",
+    }
+    domain = domain_map.get(platform_type, "")
+    if not domain:
+        return True, ""
+    pol = policy_for(domain)
+    try:
+        if hasattr(last_run_at, "timestamp"):
+            elapsed = time.time() - last_run_at.timestamp()
+        else:
+            return True, ""
+    except Exception:
+        return True, ""
+    if elapsed < pol.min_scan_interval_sec:
+        wait_min = int((pol.min_scan_interval_sec - elapsed) / 60) + 1
+        return False, f"Cooldown active — wait {wait_min} min before scanning {platform_type} again"
+    return True, ""
 
 
 # ── URL deduplication ─────────────────────────────────────────

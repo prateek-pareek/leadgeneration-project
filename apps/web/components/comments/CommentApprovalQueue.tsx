@@ -172,6 +172,7 @@ function CommentVariantCard({
   const typeLabels: Record<string, string> = {
     concise: "Concise",
     insightful: "Insightful",
+    peer: "Peer",
     founder_friendly: "Founder-Friendly",
   };
 

@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/layout/Topbar";
 import { useAuthStore } from "@/lib/stores/authStore";
+import { Puzzle, CheckCircle } from "lucide-react";
 import api from "@/lib/api/client";
+import { detectExtension } from "@/lib/extension/commentAssist";
 
 async function fetchMe() {
   const { data } = await api.get("/auth/me");
@@ -49,6 +51,11 @@ export default function SettingsPage() {
   const [pwForm, setPwForm] = useState({ current_password: "", new_password: "", confirm: "" });
   const [pwMsg, setPwMsg] = useState("");
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
+  const [extensionInstalled, setExtensionInstalled] = useState(false);
+
+  useEffect(() => {
+    detectExtension().then(setExtensionInstalled);
+  }, []);
 
   if (me && !profileReady) {
     setProfile({ name: me.name || "", email: me.email || "" });
@@ -178,6 +185,38 @@ export default function SettingsPage() {
               <p className="text-gray-900 mt-0.5">{me?.created_at ? new Date(me.created_at).toLocaleDateString() : "—"}</p>
             </div>
           </div>
+        </Section>
+
+        {/* Comment Assist extension */}
+        <Section title="Comment Assist extension">
+          <div className={`rounded-md border px-4 py-3 flex items-start gap-3 ${
+            extensionInstalled ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"
+          }`}>
+            {extensionInstalled ? (
+              <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+            ) : (
+              <Puzzle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            )}
+            <div className="text-sm">
+              <p className={`font-medium ${extensionInstalled ? "text-green-800" : "text-amber-800"}`}>
+                {extensionInstalled ? "Extension connected" : "Extension not detected"}
+              </p>
+              <p className={`text-xs mt-1 ${extensionInstalled ? "text-green-700" : "text-amber-700"}`}>
+                {extensionInstalled
+                  ? "Assist post will auto-fill comments on LinkedIn, Threads, X, Reddit, and more."
+                  : "Install the Chrome extension to auto-fill comment boxes when you open posts."}
+              </p>
+            </div>
+          </div>
+          <ol className="text-xs text-gray-600 space-y-2 list-decimal list-inside">
+            <li>Open <code className="bg-gray-100 px-1 rounded">chrome://extensions</code></li>
+            <li>Enable <strong>Developer mode</strong></li>
+            <li>Click <strong>Load unpacked</strong> → select <code className="bg-gray-100 px-1 rounded">apps/extension</code> in this repo</li>
+            <li>Reload ProspectOS, then use <strong>Assist post</strong> on Comments → Ready to post</li>
+          </ol>
+          <p className="text-xs text-gray-400">
+            The extension never clicks Post for you — it only fills the draft so you can review and submit safely.
+          </p>
         </Section>
 
         {/* Safety & approval rules */}

@@ -2,6 +2,7 @@ package leads
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -125,23 +126,30 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, p listParams) (*Lis
 
 func (s *Service) Get(ctx context.Context, orgID, leadID uuid.UUID) (*Lead, error) {
 	var l Lead
+	var customFieldsJSON []byte
 	err := s.db.QueryRow(ctx, `
 		SELECT id, org_id, author_id, company_id, post_id, source,
 		       status, pipeline_stage, owner_id, tags,
 		       next_action, next_action_at, last_contact_at,
-		       is_suppressed, created_at, updated_at
+		       is_suppressed, custom_fields, created_at, updated_at
 		FROM leads
 		WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL
 	`, leadID, orgID).Scan(
 		&l.ID, &l.OrgID, &l.AuthorID, &l.CompanyID, &l.PostID, &l.Source,
 		&l.Status, &l.PipelineStage, &l.OwnerID, &l.Tags,
 		&l.NextAction, &l.NextActionAt, &l.LastContactAt,
-		&l.IsSuppressed, &l.CreatedAt, &l.UpdatedAt,
+		&l.IsSuppressed, &customFieldsJSON, &l.CreatedAt, &l.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	return &l, err
+	if err != nil {
+		return nil, err
+	}
+	if len(customFieldsJSON) > 0 {
+		_ = json.Unmarshal(customFieldsJSON, &l.CustomFields)
+	}
+	return &l, nil
 }
 
 func (s *Service) Create(ctx context.Context, orgID uuid.UUID, input CreateLeadInput) (*Lead, error) {
@@ -169,7 +177,7 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, input CreateLeadI
 	}
 
 	s.audit.Log(ctx, orgID, "lead.created", "lead", l.ID, nil, &l)
-	_ = s.enqueuer.EnqueueResearch(ctx, l.ID, orgID)
+	_ = s.enqueuer.EnqueueAnalyze(ctx, l.ID, orgID)
 
 	return &l, nil
 }

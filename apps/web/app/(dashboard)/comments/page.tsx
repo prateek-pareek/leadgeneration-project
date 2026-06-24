@@ -7,6 +7,7 @@ import { EmptyState } from "@/components/shared/EmptyState";
 import { MessageSquare, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import api from "@/lib/api/client";
+import { CommentPostQueue } from "@/components/comments/CommentPostQueue";
 
 async function fetchDrafts() {
   const { data } = await api.get("/comment-drafts", { params: { limit: 50 } });
@@ -14,7 +15,11 @@ async function fetchDrafts() {
 }
 async function fetchApprovalCount() {
   const { data } = await api.get("/approvals/count");
-  return (data as any).count as number;
+  return ((data as any).pending ?? (data as any).count ?? 0) as number;
+}
+async function fetchReadyCount() {
+  const { data } = await api.get("/comment-drafts", { params: { status: "approved" } });
+  return (data as any[]).length;
 }
 
 export default function CommentsPage() {
@@ -28,6 +33,11 @@ export default function CommentsPage() {
     queryFn: fetchApprovalCount,
     refetchInterval: 30_000,
   });
+  const { data: readyCount = 0 } = useQuery({
+    queryKey: ["comment-drafts", "approved-count"],
+    queryFn: fetchReadyCount,
+    refetchInterval: 30_000,
+  });
 
   const byStatus = drafts.reduce<Record<string, number>>((acc, d) => {
     acc[d.status] = (acc[d.status] ?? 0) + 1;
@@ -38,6 +48,21 @@ export default function CommentsPage() {
     <div>
       <Topbar title="Comments" />
       <div className="p-6 max-w-4xl space-y-6">
+
+        {readyCount > 0 && (
+          <a
+            href="#ready-to-post"
+            className="flex items-center justify-between rounded-lg border border-blue-300 bg-blue-50 px-5 py-4 hover:bg-blue-100 transition-colors"
+          >
+            <div>
+              <p className="text-sm font-semibold text-blue-800">
+                {readyCount} approved comment{readyCount !== 1 ? "s" : ""} ready to post
+              </p>
+              <p className="text-xs text-blue-700 mt-0.5">Copy, open the post on LinkedIn/Threads/Reddit, and mark as posted.</p>
+            </div>
+            <ArrowRight className="h-5 w-5 text-blue-700 flex-shrink-0" />
+          </a>
+        )}
 
         {/* Approval CTA */}
         {pendingCount > 0 && (
@@ -68,6 +93,16 @@ export default function CommentsPage() {
               <p className="text-xs font-medium mt-1">{label}</p>
             </div>
           ))}
+        </div>
+
+        {/* Ready to post queue */}
+        <div id="ready-to-post">
+          <h2 className="text-sm font-semibold text-gray-900 mb-3">Ready to post</h2>
+          <p className="text-xs text-gray-500 mb-3">
+            Install the Comment Assist extension (Settings) for one-click fill on LinkedIn & Threads.
+            Reddit and Dev.to can also auto-post when API keys are configured server-side.
+          </p>
+          <CommentPostQueue />
         </div>
 
         {/* Recent drafts */}

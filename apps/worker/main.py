@@ -11,8 +11,10 @@ from config import settings
 from jobs.research import ResearchJob
 from jobs.scoring import ScoringJob
 from jobs.comment_draft import CommentDraftJob
+from jobs.comment_post import CommentPostJob
 from jobs.outreach_draft import OutreachDraftJob
 from jobs.normalize import NormalizeJob
+from jobs.signal_analysis import SignalAnalysisJob
 from jobs.intent import IntentJob
 from jobs import source_scan as source_scan_module
 
@@ -22,9 +24,11 @@ if settings.sentry_dsn:
 log = structlog.get_logger()
 
 JOB_HANDLERS = {
+    "lead.analyze": SignalAnalysisJob,
     "lead.research": ResearchJob,
     "lead.score": ScoringJob,
     "comment.generate": CommentDraftJob,
+    "comment.post": CommentPostJob,
     "outreach.generate": OutreachDraftJob,
     "post.normalize": NormalizeJob,
     "post.intent": IntentJob,
@@ -38,7 +42,7 @@ async def process_job(redis_client, db_pool, job_type: str, payload: dict) -> No
     if job_type == "source.scan":
         async with db_pool.acquire() as conn:
             try:
-                await source_scan_module.handle(payload, conn)
+                await source_scan_module.handle(payload, conn, redis_client)
             except Exception as exc:
                 log.error("job_failed", job_type=job_type, error=str(exc))
                 sentry_sdk.capture_exception(exc)

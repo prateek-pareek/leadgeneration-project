@@ -20,3 +20,5 @@ class LeadScore(BaseModel):
     top_signals: list[str] = []
     explanation: str
     recommended_action: str
+    help_seeker_type: str = "unknown"
+    engagement_play: str = "skip"

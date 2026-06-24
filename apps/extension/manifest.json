@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "ProspectOS Comment Assist",
+  "version": "1.0.0",
+  "description": "Auto-fills approved sales comments on LinkedIn, Threads, X, Reddit, and more. You review and click Post.",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "https://www.linkedin.com/*",
+    "https://linkedin.com/*",
+    "https://www.threads.net/*",
+    "https://threads.net/*",
+    "https://twitter.com/*",
+    "https://x.com/*",
+    "https://www.reddit.com/*",
+    "https://dev.to/*",
+    "https://news.ycombinator.com/*",
+    "http://localhost:3000/*",
+    "http://localhost:3001/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:3000/*", "http://localhost:3001/*"],
+      "js": ["content-scripts/bridge.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.linkedin.com/*", "https://linkedin.com/*"],
+      "js": ["lib/fill.js", "content-scripts/linkedin.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.threads.net/*", "https://threads.net/*"],
+      "js": ["lib/fill.js", "content-scripts/threads.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://twitter.com/*", "https://x.com/*"],
+      "js": ["lib/fill.js", "content-scripts/twitter.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.reddit.com/*"],
+      "js": ["lib/fill.js", "content-scripts/reddit.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://dev.to/*"],
+      "js": ["lib/fill.js", "content-scripts/devto.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://news.ycombinator.com/*"],
+      "js": ["lib/fill.js", "content-scripts/hackernews.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "ProspectOS Comment Assist",
+    "default_popup": "popup/popup.html"
+  }
+}
