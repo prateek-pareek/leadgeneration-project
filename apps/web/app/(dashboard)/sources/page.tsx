@@ -272,16 +272,16 @@ export default function SourcesPage() {
             )}
 
             {/* Platform safety warnings */}
-            {(form.type === "linkedin" || form.type === "threads" || form.type === "twitter") && (
+            {(form.type === "linkedin" || form.type === "threads" || form.type === "twitter" || form.type === "indiehackers" || form.type === "freelance_marketplaces" || form.type === "job_portals" || form.type === "reddit" || form.type === "github") && (
               <div className="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-800 space-y-1">
-                <p className="font-semibold">🛡️ Anti-block protection enabled</p>
+                <p className="font-semibold">🛡️ Strict scraping safety (SCRAPING_STRICT_MODE=true)</p>
                 <ul className="list-disc list-inside space-y-0.5 text-amber-700">
-                  <li>Uses Google snippets first — avoids direct platform hits when possible</li>
-                  <li>Strict rate limits: max 3–4 requests/min, daily caps enforced</li>
-                  <li>1-hour cooldown between scans for LinkedIn/Threads</li>
-                  <li>Auto-pauses for 2–3 hours if CAPTCHA or block detected</li>
-                  <li>LinkedIn Playwright is <strong>off by default</strong> (set SCRAPING_LINKEDIN_USE_PLAYWRIGHT=true only if needed)</li>
-                  <li>Only scans public content — no login, no automated posting</li>
+                  <li>Google snippets first — zero direct hits on LinkedIn/Upwork when possible</li>
+                  <li>Rate limits ~45% lower + longer delays between requests</li>
+                  <li>Scan cooldowns: LinkedIn 2h · Threads 1h · Job/Freelance 15–60 min</li>
+                  <li>Max 12 results/scan, max 3 portals/scan in strict mode</li>
+                  <li>Circuit breaker pauses 3–4 hours after CAPTCHA or block detection</li>
+                  <li>LinkedIn Playwright disabled in strict mode — never log in to platforms</li>
                 </ul>
               </div>
             )}

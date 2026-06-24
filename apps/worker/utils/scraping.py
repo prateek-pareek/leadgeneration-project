@@ -26,6 +26,12 @@ import structlog
 from playwright.async_api import Page
 
 from utils.platform_safety import circuit_breaker, is_blocked, block_reason, policy_for
+from utils.scraping_safety import (
+    scan_interval_sec,
+    strict_mode,
+    effective_rpm,
+    effective_daily_cap,
+)
 
 log = structlog.get_logger()
 
@@ -105,50 +111,50 @@ class DomainRateLimiter:
     Guarantees we never exceed max_per_minute requests to any single domain.
     """
 
-    # Hard ceilings (requests per minute) — intentionally conservative
+    # Hard ceilings (requests per minute) — tightened in strict mode via policy_for
     LIMITS: dict[str, int] = {
-        "linkedin.com":      4,    # very aggressive detection
-        "threads.net":       6,
-        "google.com":        6,    # CAPTCHA risk
-        "twitter.com":       8,
-        "reddit.com":        10,   # Reddit asks for ≤60/min authenticated, much less unauthed
-        "producthunt.com":   15,
-        "dev.to":            20,
-        "remoteok.com":      15,
-        "remotive.com":      15,
-        "arbeitnow.com":     15,
-        "weworkremotely.com":15,
-        "jobicy.com":          10,
-        "workingnomads.com":   10,
-        "himalayas.app":       10,
-        "freelancer.com":      12,
-        "api.github.com":      8,
-        "upwork.com":          6,
-        "fiverr.com":          6,
-        "default":           12,
+        "linkedin.com":      2,
+        "threads.net":       3,
+        "google.com":        3,
+        "twitter.com":       5,
+        "reddit.com":        6,
+        "producthunt.com":   8,
+        "dev.to":            10,
+        "remoteok.com":      8,
+        "remotive.com":      8,
+        "arbeitnow.com":     8,
+        "weworkremotely.com":6,
+        "jobicy.com":        5,
+        "workingnomads.com": 5,
+        "himalayas.app":     4,
+        "freelancer.com":    6,
+        "api.github.com":    5,
+        "upwork.com":        2,
+        "fiverr.com":        2,
+        "default":           8,
     }
 
     # Daily quota per domain (total requests in 24h)
     DAILY_CAPS: dict[str, int] = {
-        "linkedin.com":      50,
-        "threads.net":       100,
-        "google.com":        80,
-        "twitter.com":       200,
-        "reddit.com":        300,
-        "producthunt.com":   400,
-        "dev.to":            500,
-        "remoteok.com":      200,
-        "remotive.com":      200,
-        "arbeitnow.com":     200,
-        "weworkremotely.com":200,
-        "jobicy.com":          120,
-        "workingnomads.com":   120,
-        "himalayas.app":       100,
-        "freelancer.com":      200,
-        "api.github.com":      80,
-        "upwork.com":          80,
-        "fiverr.com":          80,
-        "default":           300,
+        "linkedin.com":      25,
+        "threads.net":       40,
+        "google.com":        45,
+        "twitter.com":       80,
+        "reddit.com":        120,
+        "producthunt.com":   100,
+        "dev.to":            150,
+        "remoteok.com":      80,
+        "remotive.com":      80,
+        "arbeitnow.com":     80,
+        "weworkremotely.com":60,
+        "jobicy.com":        60,
+        "workingnomads.com": 60,
+        "himalayas.app":     50,
+        "freelancer.com":    100,
+        "api.github.com":    60,
+        "upwork.com":        30,
+        "fiverr.com":        30,
+        "default":           120,
     }
 
     def __init__(self):
@@ -160,14 +166,14 @@ class DomainRateLimiter:
     def _ceiling(self, domain: str) -> int:
         for key, val in self.LIMITS.items():
             if key in domain:
-                return val
-        return self.LIMITS["default"]
+                return effective_rpm(val)
+        return effective_rpm(self.LIMITS["default"])
 
     def _daily_cap(self, domain: str) -> int:
         for key, val in self.DAILY_CAPS.items():
             if key in domain:
-                return val
-        return self.DAILY_CAPS["default"]
+                return effective_daily_cap(val)
+        return effective_daily_cap(self.DAILY_CAPS["default"])
 
     async def acquire(self, domain: str) -> bool:
         """
@@ -424,17 +430,9 @@ def scan_allowed(platform_type: str, last_run_at) -> tuple[bool, str]:
     """Check if enough time has passed since last source scan for this platform."""
     if last_run_at is None:
         return True, ""
-    domain_map = {
-        "linkedin": "linkedin.com",
-        "threads": "threads.net",
-        "twitter": "nitter",
-        "x": "nitter",
-        "google_places": "google.com",
-    }
-    domain = domain_map.get(platform_type, "")
-    if not domain:
+    interval = scan_interval_sec(platform_type)
+    if interval <= 0:
         return True, ""
-    pol = policy_for(domain)
     try:
         if hasattr(last_run_at, "timestamp"):
             elapsed = time.time() - last_run_at.timestamp()
@@ -442,9 +440,10 @@ def scan_allowed(platform_type: str, last_run_at) -> tuple[bool, str]:
             return True, ""
     except Exception:
         return True, ""
-    if elapsed < pol.min_scan_interval_sec:
-        wait_min = int((pol.min_scan_interval_sec - elapsed) / 60) + 1
-        return False, f"Cooldown active — wait {wait_min} min before scanning {platform_type} again"
+    if elapsed < interval:
+        wait_min = int((interval - elapsed) / 60) + 1
+        hint = " (strict safety mode)" if strict_mode() else ""
+        return False, f"Cooldown active{hint} — wait {wait_min} min before scanning {platform_type} again"
     return True, ""
 
 

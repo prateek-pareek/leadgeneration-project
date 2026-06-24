@@ -20,6 +20,7 @@ import structlog
 from playwright.async_api import async_playwright
 
 from config import settings
+from utils.scraping_safety import linkedin_max_direct, strict_mode
 from utils.platform_safety import circuit_breaker, is_blocked, policy_for
 from utils.scraping import (
     rate_limiter, human_delay, safe_client, stealth_page,
@@ -145,8 +146,11 @@ async def _fetch_og_meta(url: str) -> dict | None:
 
 
 async def _scrape_playwright(url: str) -> dict | None:
-    """Last resort — stealth Playwright. Only when explicitly enabled."""
-    if not settings.scraping_linkedin_use_playwright:
+    """Last resort — stealth Playwright. Disabled in strict safety mode."""
+    if not settings.scraping_linkedin_use_playwright or strict_mode():
+        return None
+    pol = policy_for("linkedin.com")
+    if not pol.allow_playwright:
         return None
     if circuit_breaker.is_open("linkedin.com"):
         return None
@@ -220,10 +224,7 @@ async def fetch(source_config: dict) -> list[dict]:
     keywords = source_config.get("keywords", [])
     pol = policy_for("linkedin.com")
     max_results = min(source_config.get("max_results", 10), 15)
-    max_direct = min(
-        settings.scraping_linkedin_max_direct_per_scan,
-        pol.max_direct_fetches_per_scan,
-    )
+    max_direct = min(linkedin_max_direct(), pol.max_direct_fetches_per_scan)
 
     if not keywords:
         return []
@@ -233,7 +234,7 @@ async def fetch(source_config: dict) -> list[dict]:
         keywords=keywords,
         max=max_results,
         snippet_first=pol.snippet_first,
-        playwright=settings.scraping_linkedin_use_playwright,
+        playwright=settings.scraping_linkedin_use_playwright and not strict_mode(),
     )
 
     search_results = await _google_search_linkedin(keywords, max_results)

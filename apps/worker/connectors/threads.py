@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import structlog
 
-from config import settings
+from utils.scraping_safety import threads_max_direct
 from utils.platform_safety import circuit_breaker, is_blocked, policy_for
 from utils.scraping import (
     rate_limiter, human_delay, safe_client, with_backoff, SeenURLs,
@@ -139,7 +139,7 @@ async def fetch(source_config: dict) -> list[dict]:
     keywords = source_config.get("keywords", [])
     pol = policy_for("threads.net")
     max_results = min(source_config.get("max_results", 10), 15)
-    max_direct = min(settings.scraping_threads_max_direct_per_scan, pol.max_direct_fetches_per_scan)
+    max_direct = min(threads_max_direct(), pol.max_direct_fetches_per_scan)
 
     if not keywords:
         return []

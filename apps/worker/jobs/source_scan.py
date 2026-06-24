@@ -8,12 +8,12 @@ import uuid
 from datetime import datetime, timezone
 import asyncpg
 import structlog
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from connectors import hackernews, reddit, linkedin, twitter, threads, producthunt, devto, google_places, job_portals, freelance_marketplaces, github, indiehackers
 from jobs.normalize import process_post
 from utils.scraping import scan_allowed
 from utils.platform_safety import circuit_breaker
+from utils.scraping_safety import clamp_scan_config, SOURCE_CIRCUIT_DOMAINS, strict_mode
 
 log = structlog.get_logger()
 
@@ -51,7 +51,6 @@ async def handle(payload: dict, db: asyncpg.Connection, redis_client=None) -> No
         log.error("source_scan.missing_payload", payload=payload)
         return
 
-    # Load source from DB
     source = await db.fetchrow(
         """
         SELECT id, name, type, config, org_id, last_run_at
@@ -75,7 +74,8 @@ async def handle(payload: dict, db: asyncpg.Connection, redis_client=None) -> No
     if isinstance(config, str):
         config = json.loads(config)
 
-    # Enforce per-platform scan cooldown
+    config = clamp_scan_config(source_type, config)
+
     allowed, cooldown_msg = scan_allowed(source_type, source.get("last_run_at"))
     if not allowed:
         log.warning("source_scan.cooldown", source_id=source_id, type=source_type, msg=cooldown_msg)
@@ -86,15 +86,13 @@ async def handle(payload: dict, db: asyncpg.Connection, redis_client=None) -> No
         )
         return
 
-    # Check circuit breaker for risky platforms
-    domain_map = {"linkedin": "linkedin.com", "threads": "threads.net", "twitter": "nitter", "x": "nitter"}
-    domain = domain_map.get(source_type)
-    if domain and circuit_breaker.is_open(domain):
-        msg = f"Platform temporarily paused after block detection — try again in {circuit_breaker.status(domain)['cooldown_sec'] // 60} min"
-        log.warning("source_scan.circuit_open", source_id=source_id, domain=domain)
+    circuit_domains = SOURCE_CIRCUIT_DOMAINS.get(source_type, [])
+    blocked, block_msg = circuit_breaker.any_open(circuit_domains)
+    if blocked:
+        log.warning("source_scan.circuit_open", source_id=source_id, type=source_type, msg=block_msg)
         await db.execute(
             "UPDATE sources SET last_error = $1 WHERE id = $2",
-            msg,
+            block_msg,
             uuid.UUID(source_id),
         )
         return
@@ -104,16 +102,16 @@ async def handle(payload: dict, db: asyncpg.Connection, redis_client=None) -> No
         source_id=source_id,
         type=source_type,
         name=source["name"],
+        strict_mode=strict_mode(),
+        max_results=config.get("max_results"),
     )
 
-    # Update last_run_at
     await db.execute(
         "UPDATE sources SET last_run_at = $1 WHERE id = $2",
         datetime.now(timezone.utc),
         uuid.UUID(source_id),
     )
 
-    # Run the connector
     try:
         posts = await connector_fn(config)
     except Exception as e:
@@ -127,7 +125,6 @@ async def handle(payload: dict, db: asyncpg.Connection, redis_client=None) -> No
 
     log.info("source_scan.fetched", count=len(posts), source=source["name"])
 
-    # Normalize and upsert each post
     new_count = 0
     for post_data in posts:
         try:
@@ -147,7 +144,6 @@ async def handle(payload: dict, db: asyncpg.Connection, redis_client=None) -> No
                 error=str(e),
             )
 
-    # Update source stats
     await db.execute(
         """
         UPDATE sources

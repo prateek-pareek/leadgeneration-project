@@ -14,8 +14,12 @@ class Settings(BaseSettings):
     # Scraping safety — keep conservative to avoid platform blocks
     scraping_strict_mode: bool = True
     scraping_linkedin_use_playwright: bool = False
-    scraping_linkedin_max_direct_per_scan: int = 3
-    scraping_threads_max_direct_per_scan: int = 5
+    scraping_linkedin_max_direct_per_scan: int = 2
+    scraping_threads_max_direct_per_scan: int = 3
+    scraping_max_results_per_scan: int = 30
+    scraping_max_results_per_scan_strict: int = 12
+    scraping_max_portals_per_scan: int = 6
+    scraping_max_portals_per_scan_strict: int = 3
     # Never enable unless you accept account ban risk on Upwork/LinkedIn etc.
     scraping_allow_authenticated_sources: bool = False
 

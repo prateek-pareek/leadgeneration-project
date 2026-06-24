@@ -17,6 +17,7 @@ as the author — a strong signal for IT services, staff aug, and DevOps leads.
 
 import hashlib
 import re
+import asyncio
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree
@@ -24,6 +25,7 @@ from xml.etree import ElementTree
 import structlog
 
 from utils.sourcing_policy import is_portal_allowed
+from utils.scraping_safety import inter_portal_delay_sec, strict_mode
 from utils.scraping import rate_limiter, human_delay, safe_client, with_backoff, SeenURLs
 
 log = structlog.get_logger()
@@ -588,13 +590,13 @@ async def fetch(source_config: dict) -> list[dict]:
     if not portals:
         portals = DEFAULT_PORTALS
 
-    log.info("job_portals.starting", portals=portals, keywords=keywords, max=max_results)
+    log.info("job_portals.starting", portals=portals, keywords=keywords, max=max_results, strict=strict_mode())
 
     seen = SeenURLs()
     all_posts: list[dict] = []
-    per_portal = max(5, max_results // max(len(portals), 1))
+    per_portal = max(3, max_results // max(len(portals), 1))
 
-    for portal in portals:
+    for i, portal in enumerate(portals):
         allowed, reason = is_portal_allowed(portal)
         if not allowed:
             log.warning("job_portals.portal_blocked", portal=portal, reason=reason)
@@ -614,6 +616,9 @@ async def fetch(source_config: dict) -> list[dict]:
             log.info("job_portals.portal_done", portal=portal, found=len(results))
         except Exception as e:
             log.error("job_portals.portal_error", portal=portal, error=str(e))
+
+        if i < len(portals) - 1:
+            await asyncio.sleep(inter_portal_delay_sec())
 
     log.info("job_portals.done", found=len(all_posts))
     return all_posts[:max_results]

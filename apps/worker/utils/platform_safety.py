@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 
 import structlog
 
+from utils.scraping_safety import effective_daily_cap, effective_rpm, strict_mode
+
 log = structlog.get_logger()
 
 # HTTP status codes that indicate blocking
@@ -34,93 +36,205 @@ BLOCK_PATTERNS = [
     r"cf-browser-verification",  # Cloudflare
     r"g-recaptcha",
     r"hcaptcha",
+    r"sign in to continue",
+    r"login to view",
+    r"bot detection",
+    r"security check",
 ]
 
 
 @dataclass
 class PlatformPolicy:
-    """Conservative defaults per domain — override via env in scraping.py."""
-    requests_per_minute: int = 6
-    daily_cap: int = 100
-    min_delay_sec: float = 2.0
-    max_delay_sec: float = 6.0
+    """Conservative defaults per domain — tightened further when strict mode is on."""
+    requests_per_minute: int = 4
+    daily_cap: int = 80
+    min_delay_sec: float = 2.5
+    max_delay_sec: float = 7.0
     min_scan_interval_sec: int = 1800  # 30 min between full source scans
     snippet_first: bool = True
-    max_direct_fetches_per_scan: int = 5
+    max_direct_fetches_per_scan: int = 3
     allow_playwright: bool = False
-    circuit_failures_before_open: int = 3
-    circuit_open_sec: int = 7200  # 2 hours
+    circuit_failures_before_open: int = 2
+    circuit_open_sec: int = 10800  # 3 hours default
 
 
 PLATFORM_POLICIES: dict[str, PlatformPolicy] = {
     "linkedin.com": PlatformPolicy(
+        requests_per_minute=2,
+        daily_cap=25,
+        min_delay_sec=6.0,
+        max_delay_sec=14.0,
+        min_scan_interval_sec=7200,
+        snippet_first=True,
+        max_direct_fetches_per_scan=0,
+        allow_playwright=False,
+        circuit_failures_before_open=1,
+        circuit_open_sec=14400,  # 4 hours
+    ),
+    "google.com": PlatformPolicy(
         requests_per_minute=3,
-        daily_cap=30,
+        daily_cap=45,
         min_delay_sec=5.0,
         max_delay_sec=12.0,
         min_scan_interval_sec=3600,
         snippet_first=True,
-        max_direct_fetches_per_scan=3,
-        allow_playwright=False,
-        circuit_failures_before_open=2,
-        circuit_open_sec=10800,  # 3 hours
-    ),
-    "google.com": PlatformPolicy(
-        requests_per_minute=4,
-        daily_cap=60,
-        min_delay_sec=4.0,
-        max_delay_sec=10.0,
-        min_scan_interval_sec=1800,
-        snippet_first=True,
-        max_direct_fetches_per_scan=10,
-        circuit_failures_before_open=2,
-        circuit_open_sec=3600,
+        max_direct_fetches_per_scan=0,
+        circuit_failures_before_open=1,
+        circuit_open_sec=7200,
     ),
     "threads.net": PlatformPolicy(
+        requests_per_minute=2,
+        daily_cap=40,
+        min_delay_sec=4.0,
+        max_delay_sec=10.0,
+        min_scan_interval_sec=3600,
+        snippet_first=True,
+        max_direct_fetches_per_scan=2,
+        circuit_failures_before_open=2,
+        circuit_open_sec=10800,
+    ),
+    "nitter": PlatformPolicy(
         requests_per_minute=4,
         daily_cap=80,
         min_delay_sec=3.0,
-        max_delay_sec=8.0,
-        snippet_first=True,
-        max_direct_fetches_per_scan=5,
-        circuit_failures_before_open=3,
-    ),
-    "nitter": PlatformPolicy(
-        requests_per_minute=6,
-        daily_cap=150,
-        min_delay_sec=2.0,
-        max_delay_sec=5.0,
+        max_delay_sec=7.0,
+        min_scan_interval_sec=1800,
+        circuit_failures_before_open=2,
+        circuit_open_sec=7200,
     ),
     "reddit.com": PlatformPolicy(
-        requests_per_minute=8,
-        daily_cap=250,
-        min_delay_sec=1.5,
-        max_delay_sec=4.0,
+        requests_per_minute=5,
+        daily_cap=120,
+        min_delay_sec=2.5,
+        max_delay_sec=6.0,
+        min_scan_interval_sec=1200,
+        circuit_failures_before_open=2,
+        circuit_open_sec=5400,
     ),
     "freelancer.com": PlatformPolicy(
-        requests_per_minute=10,
-        daily_cap=200,
-        min_delay_sec=1.0,
-        max_delay_sec=2.5,
+        requests_per_minute=6,
+        daily_cap=100,
+        min_delay_sec=2.0,
+        max_delay_sec=5.0,
         snippet_first=True,
-        max_direct_fetches_per_scan=30,
+        max_direct_fetches_per_scan=20,
+        circuit_failures_before_open=3,
     ),
     "upwork.com": PlatformPolicy(
-        requests_per_minute=4,
-        daily_cap=60,
-        min_delay_sec=3.0,
-        max_delay_sec=8.0,
-        min_scan_interval_sec=3600,
+        requests_per_minute=2,
+        daily_cap=30,
+        min_delay_sec=5.0,
+        max_delay_sec=12.0,
+        min_scan_interval_sec=7200,
+        snippet_first=True,
+        max_direct_fetches_per_scan=0,
+        circuit_failures_before_open=1,
+        circuit_open_sec=14400,
+    ),
+    "fiverr.com": PlatformPolicy(
+        requests_per_minute=2,
+        daily_cap=30,
+        min_delay_sec=5.0,
+        max_delay_sec=12.0,
+        snippet_first=True,
+        max_direct_fetches_per_scan=0,
+        circuit_failures_before_open=1,
+    ),
+    "guru.com": PlatformPolicy(
+        requests_per_minute=2,
+        daily_cap=30,
+        min_delay_sec=5.0,
+        max_delay_sec=12.0,
         snippet_first=True,
         max_direct_fetches_per_scan=0,
     ),
-    "fiverr.com": PlatformPolicy(
-        requests_per_minute=4,
-        daily_cap=60,
-        min_delay_sec=3.0,
-        max_delay_sec=8.0,
+    "peopleperhour.com": PlatformPolicy(
+        requests_per_minute=2,
+        daily_cap=30,
+        min_delay_sec=5.0,
+        max_delay_sec=12.0,
         snippet_first=True,
         max_direct_fetches_per_scan=0,
+    ),
+    "contra.com": PlatformPolicy(
+        requests_per_minute=2,
+        daily_cap=30,
+        min_delay_sec=5.0,
+        max_delay_sec=12.0,
+        snippet_first=True,
+        max_direct_fetches_per_scan=0,
+    ),
+    "remoteok.com": PlatformPolicy(
+        requests_per_minute=8,
+        daily_cap=80,
+        min_delay_sec=2.0,
+        max_delay_sec=5.0,
+        min_scan_interval_sec=900,
+    ),
+    "remotive.com": PlatformPolicy(
+        requests_per_minute=8,
+        daily_cap=80,
+        min_delay_sec=2.0,
+        max_delay_sec=5.0,
+        min_scan_interval_sec=900,
+    ),
+    "arbeitnow.com": PlatformPolicy(
+        requests_per_minute=8,
+        daily_cap=80,
+        min_delay_sec=2.0,
+        max_delay_sec=5.0,
+        min_scan_interval_sec=900,
+    ),
+    "jobicy.com": PlatformPolicy(
+        requests_per_minute=6,
+        daily_cap=60,
+        min_delay_sec=2.5,
+        max_delay_sec=6.0,
+        min_scan_interval_sec=900,
+    ),
+    "workingnomads.com": PlatformPolicy(
+        requests_per_minute=6,
+        daily_cap=60,
+        min_delay_sec=2.5,
+        max_delay_sec=6.0,
+        min_scan_interval_sec=900,
+    ),
+    "himalayas.app": PlatformPolicy(
+        requests_per_minute=5,
+        daily_cap=50,
+        min_delay_sec=3.0,
+        max_delay_sec=7.0,
+        min_scan_interval_sec=1200,
+    ),
+    "weworkremotely.com": PlatformPolicy(
+        requests_per_minute=6,
+        daily_cap=60,
+        min_delay_sec=2.5,
+        max_delay_sec=6.0,
+        min_scan_interval_sec=900,
+    ),
+    "api.github.com": PlatformPolicy(
+        requests_per_minute=5,
+        daily_cap=60,
+        min_delay_sec=2.0,
+        max_delay_sec=5.0,
+        min_scan_interval_sec=900,
+        circuit_failures_before_open=2,
+        circuit_open_sec=3600,
+    ),
+    "dev.to": PlatformPolicy(
+        requests_per_minute=10,
+        daily_cap=150,
+        min_delay_sec=1.5,
+        max_delay_sec=4.0,
+        min_scan_interval_sec=600,
+    ),
+    "producthunt.com": PlatformPolicy(
+        requests_per_minute=8,
+        daily_cap=100,
+        min_delay_sec=2.0,
+        max_delay_sec=5.0,
+        min_scan_interval_sec=900,
     ),
 }
 
@@ -128,8 +242,33 @@ PLATFORM_POLICIES: dict[str, PlatformPolicy] = {
 def policy_for(domain: str) -> PlatformPolicy:
     for key, pol in PLATFORM_POLICIES.items():
         if key in domain:
-            return pol
-    return PlatformPolicy()
+            return PlatformPolicy(
+                requests_per_minute=effective_rpm(pol.requests_per_minute),
+                daily_cap=effective_daily_cap(pol.daily_cap),
+                min_delay_sec=pol.min_delay_sec * (1.4 if strict_mode() else 1.0),
+                max_delay_sec=pol.max_delay_sec * (1.3 if strict_mode() else 1.0),
+                min_scan_interval_sec=int(pol.min_scan_interval_sec * (1.5 if strict_mode() else 1.0)),
+                snippet_first=pol.snippet_first,
+                max_direct_fetches_per_scan=0 if (strict_mode() and pol.max_direct_fetches_per_scan == 0) else (
+                    min(pol.max_direct_fetches_per_scan, 2) if strict_mode() else pol.max_direct_fetches_per_scan
+                ),
+                allow_playwright=pol.allow_playwright and not strict_mode(),
+                circuit_failures_before_open=max(1, pol.circuit_failures_before_open - (1 if strict_mode() else 0)),
+                circuit_open_sec=int(pol.circuit_open_sec * (1.25 if strict_mode() else 1.0)),
+            )
+    base = PlatformPolicy()
+    return PlatformPolicy(
+        requests_per_minute=effective_rpm(base.requests_per_minute),
+        daily_cap=effective_daily_cap(base.daily_cap),
+        min_delay_sec=base.min_delay_sec * (1.4 if strict_mode() else 1.0),
+        max_delay_sec=base.max_delay_sec * (1.3 if strict_mode() else 1.0),
+        min_scan_interval_sec=int(base.min_scan_interval_sec * (1.5 if strict_mode() else 1.0)),
+        snippet_first=base.snippet_first,
+        max_direct_fetches_per_scan=min(base.max_direct_fetches_per_scan, 2) if strict_mode() else base.max_direct_fetches_per_scan,
+        allow_playwright=base.allow_playwright and not strict_mode(),
+        circuit_failures_before_open=max(1, base.circuit_failures_before_open - (1 if strict_mode() else 0)),
+        circuit_open_sec=int(base.circuit_open_sec * (1.25 if strict_mode() else 1.0)),
+    )
 
 
 def is_blocked(status_code: int | None, body: str = "") -> bool:
@@ -187,6 +326,13 @@ class CircuitBreaker:
             log.info("circuit.closed", domain=domain)
         return False
 
+    def any_open(self, domains: list[str]) -> tuple[bool, str]:
+        for d in domains:
+            if self.is_open(d):
+                st = self.status(d)
+                return True, f"{d} paused ({st['last_block_reason']}) — retry in {st['cooldown_sec'] // 60} min"
+        return False, ""
+
     def record_success(self, domain: str) -> None:
         st = self._state(domain)
         st.failures.clear()
@@ -207,6 +353,7 @@ class CircuitBreaker:
                 reason=reason,
                 cooldown_sec=pol.circuit_open_sec,
                 failures=len(st.failures),
+                strict_mode=strict_mode(),
             )
 
     def status(self, domain: str) -> dict:
@@ -221,6 +368,7 @@ class CircuitBreaker:
                 "daily_cap": pol.daily_cap,
                 "rpm": pol.requests_per_minute,
                 "snippet_first": pol.snippet_first,
+                "strict_mode": strict_mode(),
             },
         }
 
