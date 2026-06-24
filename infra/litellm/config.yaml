@@ -1,0 +1,33 @@
+model_list:
+  # Fast tasks: intent detection, classification, deduplication
+  - model_name: fast
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GOOGLE_API_KEY
+
+  # Smart tasks: research, scoring, comment drafting, outreach
+  - model_name: smart
+    litellm_params:
+      model: gemini/gemini-3.5-flash
+      api_key: os.environ/GOOGLE_API_KEY
+
+  # Fallback if quota exceeded
+  - model_name: fallback
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GOOGLE_API_KEY
+
+router_settings:
+  routing_strategy: simple-shuffle
+  fallbacks:
+    - smart:
+        - fallback
+    - fast:
+        - fallback
+  num_retries: 3
+  retry_after: 5
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  max_budget: 5  # USD/month hard cap

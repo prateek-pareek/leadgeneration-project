@@ -1,0 +1,45 @@
+# Environment
+.env
+.env.local
+.env.*.local
+*.env
+
+# Go
+apps/api/bin/
+apps/api/*.exe
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+dist/
+*.egg-info/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.turbo/
+
+# Docker volumes (local dev data)
+pgdata/
+redisdata/
+ollamadata/
+meilidata/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Secrets
+*.pem
+*.key
+*.crt
+secrets/
